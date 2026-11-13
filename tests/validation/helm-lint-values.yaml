@@ -1,0 +1,28 @@
+# Synthetic values; no live credentials or customer settings.
+forgejo:
+  enabled: true
+  hostname: forgejo.example.com
+authKeycloak:
+  hostname: auth.example.com
+  realm: example
+  adminUser: admin
+externalGateway:
+  enabled: false
+authentication:
+  clientId: forgejo
+  redirectUris: [https://forgejo.example.com/user/oauth2/keycloak/callback]
+  webOrigins: [https://forgejo.example.com]
+  realmRoles: [forgejo-user, forgejo-admin]
+  roleClaim: forgejo_roles
+  audiences: []
+  refreshTokenRotation: true
+  mode: login-only
+  userTokenForwarding: false
+  gatewayPermissions: []
+clientApproval:
+  clientId: forgejo
+  redirectUris: [https://forgejo.example.com/user/oauth2/keycloak/callback]
+  webOrigins: [https://forgejo.example.com]
+  realmRoles: [forgejo-user, forgejo-admin]
+  audiences: []
+  gatewayPermissions: []

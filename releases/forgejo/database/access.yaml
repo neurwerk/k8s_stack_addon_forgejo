@@ -1,0 +1,24 @@
+# Additive ingress for the existing shared PostgreSQL Pod port, not its Service port.
+# Base continues to own the PostgreSQL server and all other database consumers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forgejo-postgres-access
+  namespace: infra-postgres-operations
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-operations
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: forgejo
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: forgejo
+              app.kubernetes.io/instance: forgejo
+      ports:
+        - protocol: TCP
+          port: 9712

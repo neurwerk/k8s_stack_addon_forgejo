@@ -1,0 +1,19 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: forgejo-oidc-values
+  namespace: auth-keycloak
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: auth-keycloak-openbao-secret-store
+    kind: SecretStore
+  target:
+    name: forgejo-oidc-values
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: oidcClientSecret
+      remoteRef:
+        key: addons/forgejo/oidc
+        property: oidcClientSecret

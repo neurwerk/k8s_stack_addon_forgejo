@@ -1,0 +1,63 @@
+{{- if .Values.forgejo.enabled }}
+{{- $hostname := required "forgejo.hostname is required" .Values.forgejo.hostname }}
+{{- if not (regexMatch `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$` $hostname) }}
+{{- fail "forgejo.hostname must be an exact DNS hostname" }}
+{{- end }}
+{{- range $name, $issuer := dict "staging" "letsencrypt-staging-cluster-issuer" "production" "letsencrypt-production-cluster-issuer" }}
+---
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: cert-manager-forgejo-{{ $name }}
+spec:
+  allowed:
+    dnsNames:
+      values:
+        - {{ $hostname | quote }}
+      required: true
+    isCA: false
+    usages:
+      - digital signature
+      - key encipherment
+  constraints:
+    minDuration: 2160h
+    maxDuration: 2160h
+    privateKey:
+      algorithm: RSA
+      minSize: 2048
+      maxSize: 2048
+  selector:
+    issuerRef:
+      group: cert-manager.io
+      kind: ClusterIssuer
+      name: {{ $issuer | quote }}
+    namespace:
+      matchNames:
+        - forgejo
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cert-manager-forgejo-approval-use
+rules:
+  - apiGroups: [policy.cert-manager.io]
+    resources: [certificaterequestpolicies]
+    verbs: [use]
+    resourceNames:
+      - cert-manager-forgejo-staging
+      - cert-manager-forgejo-production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cert-manager-forgejo-approval-use
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cert-manager-forgejo-approval-use
+subjects:
+  - kind: ServiceAccount
+    name: infra-cert-manager-controller
+    namespace: infra-cert-manager
+{{- end }}

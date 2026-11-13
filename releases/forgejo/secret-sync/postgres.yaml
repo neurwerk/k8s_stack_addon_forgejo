@@ -1,0 +1,19 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: forgejo-postgres-password
+  namespace: infra-postgres-operations
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: infra-postgres-operations-openbao-secret-store
+    kind: SecretStore
+  target:
+    name: forgejo-postgres-password
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: password
+      remoteRef:
+        key: addons/forgejo/database
+        property: dbPassword

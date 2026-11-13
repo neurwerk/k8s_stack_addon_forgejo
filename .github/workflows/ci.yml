@@ -1,0 +1,101 @@
+name: CI
+on:
+  workflow_call:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+env:
+  # Reviewed Base 0.3.34 source.
+  BASE_REF: 3f517f697e3234dc589c7748b8f8b0b4524b9e44
+jobs:
+  validate:
+    name: Required CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          version: "0.12.7"
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v4.2.4
+      - name: Install Kustomize
+        uses: supplypike/setup-bin@8e3f88b4f143d9b5c3497f0fc12d45c83c123787 # v4.0.1
+        with:
+          uri: https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz
+          name: kustomize
+          version: v5.8.1
+      - name: Install kubeconform
+        uses: supplypike/setup-bin@8e3f88b4f143d9b5c3497f0fc12d45c83c123787 # v4.0.1
+        with:
+          uri: https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          name: kubeconform
+          version: 0.8.0
+      - name: Acquire reviewed Base source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: neurwerk/k8s_stack_base
+          ref: ${{ env.BASE_REF }}
+          path: .ci/base
+      - name: Run full validation
+        run: make check BASE_REPO="$GITHUB_WORKSPACE/.ci/base"
+      - name: Build the tooling image without publication
+        run: |
+          version="$(uv run --locked --project tooling python -c 'import tomllib; print(tomllib.load(open("tooling/pyproject.toml", "rb"))["project"]["version"])')"
+          make tooling-build VERSION="$version" REVISION="$GITHUB_SHA"
+      - name: Verify packaged bootstrap and native output format offline
+        run: |
+          set -eu -o pipefail
+          read -r tooling native < <(uv run --locked --project tooling python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          from k8s_stack_tooling.addons import load_manifest
+          artifacts = {a.id: a.image for a in load_manifest(Path("release/manifest.yaml")).spec.artifacts}
+          version = tomllib.loads(Path("tooling/pyproject.toml").read_text())["project"]["version"]
+          print(artifacts["tooling"].split("@", 1)[0].rsplit(":", 1)[0] + ":" + version, artifacts["native"])
+          PY
+          )
+          directory="$RUNNER_TEMP/forgejo-payloads"
+          mkdir -p "$directory"
+          chmod 777 "$directory"
+          docker run --rm --network none --read-only --user 65532:65532 \
+            -v "$directory:/work/payloads" "$tooling" forgejo-stage-bootstrap
+          cmp "$directory/bootstrap.sh" tooling/src/forgejo_tooling/payloads/bootstrap.sh
+          test "$(stat -c '%a' "$directory/bootstrap.sh")" = 444
+          # Match the deployed Bash/timeout contract, not POSIX sh syntax.
+          docker run --rm --platform linux/amd64 --network none --read-only \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /bin/bash -v "$directory:/work/payloads:ro" "$native" -ec '
+              test "$(id -u)" = 1000
+              test "$(id -g)" = 1000
+              test -x /usr/bin/timeout
+              test -x /bin/bash
+              test -r /work/payloads/bootstrap.sh
+              /usr/bin/timeout -k 2 15 /bin/bash -n /work/payloads/bootstrap.sh
+            '
+          umask 077
+          output="$(mktemp "$RUNNER_TEMP/native-output.XXXXXX")"
+          trap 'rm -f "$output"' EXIT
+          timeout 60 docker run --rm --platform linux/amd64 --network none --read-only \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /app/gitea/gitea "$native" generate secret INTERNAL_TOKEN > "$output" 2>/dev/null
+          OUTPUT_FILE="$output" uv run --locked --project tooling python - <<'PY'
+          import os
+          from pathlib import Path
+          from k8s_stack_tooling.addons import load_manifest, valid_value
+          definition = load_manifest(Path("release/manifest.yaml")).spec.native_outputs[0]
+          raw = Path(os.environ["OUTPUT_FILE"]).read_bytes()
+          try:
+              value = raw.decode().strip() if len(raw) <= definition.max_bytes else ""
+          except UnicodeError:
+              value = ""
+          if not valid_value(value, definition.validation):
+              raise SystemExit("Native output format verification failed")
+          PY

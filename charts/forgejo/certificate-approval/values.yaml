@@ -1,0 +1,3 @@
+forgejo:
+  enabled: false
+  hostname: ""
